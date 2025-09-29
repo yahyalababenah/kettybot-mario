@@ -273,72 +273,90 @@
   const keys = new Set(), keyLatch = new Set();
   addEventListener('keydown', e=>{ keys.add(e.code); });
   addEventListener('keyup',   e=>{ keys.delete(e.code); keyLatch.delete('jump'); });
- /* ===== تحكّم الموبايل المُحسّن (Pointer Events + سحب) ===== */
+/* ===== تحكّم الموبايل المُحسّن (Pointer Events + سحب) ===== */
 const press   = (code, el)=>{ keys.add(code); el?.classList.add('on'); if(navigator.vibrate) navigator.vibrate(10); };
 const release = (code, el)=>{ keys.delete(code); if(code==='Space') keyLatch.delete('jump'); el?.classList.remove('on'); };
 
 function bindButton(btn){
   const code = btn.dataset.key;
+
   btn.addEventListener('pointerdown', e=>{
-    e.preventDefault(); btn.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();               // << مهم: لا تدع الزون تلتقط هذا اللمس
+    btn.setPointerCapture(e.pointerId);
     press(code, btn);
   });
-  const up = e=>{ try{ btn.releasePointerCapture(e.pointerId); }catch{} release(code, btn); };
+
+  const up = e=>{
+    e.stopPropagation();               // << مهم
+    try{ btn.releasePointerCapture(e.pointerId); }catch{}
+    release(code, btn);
+  };
   btn.addEventListener('pointerup', up);
   btn.addEventListener('pointercancel', up);
   btn.addEventListener('lostpointercapture', up);
 }
 document.querySelectorAll('.tbtn').forEach(bindButton);
 
-/* مناطق سحب عمليّة:
-   - السحب أفقياً على يسار الشاشة ⇒ يمين/يسار
-   - ضغطة قصيرة في اليمين ⇒ قفز
-   - نقرة مزدوجة في اليمين ⇒ اندفاع (KeyZ)
+/* مناطق سحب:
+   - يسار: سحب أفقياً ⇒ يمين/يسار
+   - يمين: نقرة ⇒ قفز، نقرة مزدوجة ⇒ اندفاع
 */
 const leftZone  = document.getElementById('zone-left');
 const rightZone = document.getElementById('zone-right');
 
 let swipe = { id:null, startX:0, active:'none' };
-const SWIPE_DEAD = 16;   // عتبة بداية الحركة
-const SWIPE_MIN   = 40;  // مسافة متوسطة لاعتبار اتجاه واضح
+const SWIPE_DEAD = 16;
+const SWIPE_MIN  = 40;
 
 leftZone.addEventListener('pointerdown', e=>{
-  e.preventDefault(); leftZone.setPointerCapture(e.pointerId);
+  // تجاهل لو بدأ اللمس على زر داخل الزون
+  if (e.target.closest('.tbtn')) return;   // << جديد
+  e.preventDefault();
+  leftZone.setPointerCapture(e.pointerId);
   swipe.id = e.pointerId; swipe.startX = e.clientX; swipe.active = 'none';
 });
 
 leftZone.addEventListener('pointermove', e=>{
   if(swipe.id !== e.pointerId) return;
+  // لا تمسح مفاتيح الزرّ إذا كان اللمس أصلاً على زر (احتياطي)
+  if (e.target.closest('.tbtn')) return;   // << جديد
+
   const dx = e.clientX - swipe.startX;
-  // اطفِ كلا الاتجاهين أولاً
+
+  // امسح الاتجاهين فقط عندما تكون إيماءة سحب فعلية
   keys.delete('ArrowLeft'); keys.delete('ArrowRight');
+
   if(Math.abs(dx) < SWIPE_DEAD){ swipe.active = 'none'; return; }
   if(dx > SWIPE_MIN){ keys.add('ArrowRight'); swipe.active = 'right'; }
   else if(dx < -SWIPE_MIN){ keys.add('ArrowLeft'); swipe.active = 'left'; }
 });
 
-function endSwipe(){
-  keys.delete('ArrowLeft'); keys.delete('ArrowRight');
-  swipe.id = null; swipe.active = 'none';
+function endSwipe(e){
+  if(swipe.id !== null && (!e || e.pointerId === swipe.id)){
+    keys.delete('ArrowLeft'); keys.delete('ArrowRight');
+    swipe.id = null; swipe.active = 'none';
+  }
 }
-leftZone.addEventListener('pointerup',   endSwipe);
+leftZone.addEventListener('pointerup', endSwipe);
 leftZone.addEventListener('pointercancel', endSwipe);
 leftZone.addEventListener('lostpointercapture', endSwipe);
 
-/* يمين: قفز/اندفاع مع نقرة مزدوجة */
+/* يمين: قفز/اندفاع */
 let lastTap = 0;
 rightZone.addEventListener('pointerdown', e=>{
-  e.preventDefault(); rightZone.setPointerCapture(e.pointerId);
+  if (e.target.closest('.tbtn')) return; // الأزرار لها منطقها
+  e.preventDefault();
+  rightZone.setPointerCapture(e.pointerId);
 });
 rightZone.addEventListener('pointerup', e=>{
+  if (e.target.closest('.tbtn')) return;
   const now = performance.now();
   const dt = now - lastTap;
   lastTap = now;
-  // نقرة مزدوجة خلال 280ms ⇒ اندفاع
   if(dt > 0 && dt < 280){
     press('KeyZ'); setTimeout(()=>release('KeyZ'), 160);
   }else{
-    // قفز عادي
     press('Space'); setTimeout(()=>release('Space'), 80);
   }
 });
@@ -351,6 +369,7 @@ rightZone.addEventListener('lostpointercapture', ()=> release('Space'));
     if(e.target.closest('.touch') || e.target.id === 'game'){ e.preventDefault(); }
   }, { passive:false });
 });
+
 
 
   // ===== تصادم =====
@@ -1038,6 +1057,7 @@ function drawStreetDetails(startX, baselineY, spanW){
   </script>
 </body>
 </html>
+
 
 
 
