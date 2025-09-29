@@ -1,4 +1,4 @@
-<!doctype html>
+ <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
@@ -155,20 +155,26 @@
 
   function loadSprites(){
     const bust='?v='+Date.now();
-    SPRITES.idle.onload=()=>{
-      SPRITES.ready=true;
-      SPRITES.frameW = SPRITES.idle.naturalWidth  || SPRITES.idle.width;
-      SPRITES.frameH = SPRITES.idle.naturalHeight || SPRITES.idle.height;
-    };
-    SPRITES.idle.onerror = ()=>console.warn('⚠️ idle not found:', DEFAULT_ASSETS.idle);
-    SPRITES.idle.src = DEFAULT_ASSETS.idle + bust;
+   SPRITES.idle.onload = ()=>{
+  SPRITES.ready = true;
+  SPRITES.frameW = SPRITES.idle.naturalWidth|0;
+  SPRITES.frameH = SPRITES.idle.naturalHeight|0;
+  console.log('[idle loaded]', SPRITES.frameW, SPRITES.frameH, SPRITES.idle.src);
+};
+SPRITES.idle.onerror = ()=> console.warn('⚠️ idle NOT found at', SPRITES.idle.src);
 
-    SPRITES.walk.onload=()=>{
-      const w = SPRITES.walk.naturalWidth || SPRITES.walk.width;
-      const h = SPRITES.walk.naturalHeight|| SPRITES.walk.height;
-      if(w>0 && h>0){ SPRITES.haveWalk=true; SPRITES.frameW=Math.floor(w/SPRITES.walkFrames); SPRITES.frameH=h; }
-    };
-    SPRITES.walk.onerror = ()=>console.warn('⚠️ walk not found:', DEFAULT_ASSETS.walk);
+SPRITES.walk.onload = ()=>{
+  const nw = SPRITES.walk.naturalWidth|0;
+  const nh = SPRITES.walk.naturalHeight|0;
+  if (nw>0 && nh>0){
+    SPRITES.haveWalk = true;
+    SPRITES.frameW = Math.floor(nw / SPRITES.walkFrames);
+    SPRITES.frameH = nh;
+    console.log('[walk loaded]', SPRITES.walkFrames, 'frames', SPRITES.frameW+'x'+SPRITES.frameH, SPRITES.walk.src);
+  }
+};
+SPRITES.walk.onerror = ()=> console.warn('⚠️ walk NOT found at', SPRITES.walk.src);
+
     SPRITES.walk.src = DEFAULT_ASSETS.walk + bust;
   }
   loadSprites();
@@ -799,55 +805,71 @@ function drawStreetDetails(startX, baselineY, spanW){
 
   // ===== رسم شخصية KettyBot (تحكم يدوي بالـscale والـoffsetY) =====
   function drawKetty(px, py){
-    const w = player.w, h = player.h;
-    const isWalking = (SPRITES.haveWalk && Math.abs(player.vx) > 10 && player.onGround);
-    const cfg = isWalking ? MANUAL.walk : MANUAL.idle;
-    let img = isWalking ? SPRITES.walk : SPRITES.idle;
+  const w = player.w, h = player.h;
+  const isWalking = (SPRITES.haveWalk && Math.abs(player.vx) > 10 && player.onGround);
+  const cfg = isWalking ? MANUAL.walk : MANUAL.idle;
+  const img = isWalking ? SPRITES.walk : SPRITES.idle;
 
-    // مصدر الإطار
-    let sx=0, sw, sh;
-    if(isWalking){
-      const frames = Math.max(1, SPRITES.walkFrames|0);
-      sw = Math.floor((img.naturalWidth||img.width)/frames);
-      sh = (img.naturalHeight||img.height);
-      const fps=10, frame = Math.floor(time*fps)%frames;
-      sx = frame*sw;
-    }else{
-      sw = SPRITES.frameW || (img.naturalWidth||img.width||w);
-      sh = SPRITES.frameH || (img.naturalHeight||img.height||h);
-    }
+  // حدد مصدر الإطار
+  let sx = 0, sw = 0, sh = 0;
+  if (isWalking) {
+    const frames = Math.max(1, SPRITES.walkFrames|0);
+    const nw = img?.naturalWidth|0, nh = img?.naturalHeight|0;
+    if (nw > 0 && nh > 0) { sw = Math.floor(nw/frames); sh = nh; }
+  } else {
+    sw = SPRITES.frameW|0; sh = SPRITES.frameH|0;
+    if (sw<=0 || sh<=0) { sw = img?.naturalWidth|0; sh = img?.naturalHeight|0; }
+  }
 
-    // تحجيم داخل hitbox + مقياس يدوي
-    const fit = Math.min(w/sw, h/sh);
-    const s   = fit * (cfg.scale || 1);
-    const dw  = Math.max(1, Math.round(sw * s));
-    const dh  = Math.max(1, Math.round(sh * s));
-
+  // لو فشل التحميل أو sw/sh صفر → ارسم بديل
+  if (!img || sw<=0 || sh<=0) {
+    const dw = Math.round(w*(cfg.scale||1));
+    const dh = Math.round(h*(cfg.scale||1));
     const footY = py + h - PLAYER_BASELINE;
-    const dy = Math.round( footY - dh - (cfg.offsetY || 0) );
-    const dx = Math.round( px + (w - dw)/2 );
+    const dx = Math.round(px + (w - dw)/2);
+    const dy = Math.round(footY - dh - (cfg.offsetY||0));
 
     ctx.save();
-    ctx.imageSmoothingEnabled = false;
-    if (player.facing === -1){
-      ctx.translate(dx + dw/2, dy + dh/2);
-      ctx.scale(-1, 1);
-      ctx.translate(-(dx + dw/2), -(dy + dh/2));
-    }
-
-    if (img && (img.complete || img.naturalWidth)){
-      ctx.drawImage(img, sx, 0, sw, sh, dx, dy, dw, dh);
-    } else {
-      ctx.fillStyle = '#f6c700'; ctx.fillRect(dx, dy, dw, dh);
-      ctx.fillStyle = '#222';     ctx.fillRect(dx+6, dy+Math.round(dh*0.35), dw-12, Math.round(dh*0.55));
-    }
+    ctx.fillStyle = '#f6c700';
+    ctx.fillRect(dx, dy, dw, dh);
+    ctx.fillStyle = '#222';
+    ctx.font = 'bold 10px system-ui';
+    ctx.fillText('NO SPRITE', dx+4, dy+12);
+    ctx.restore();
 
     // ظل
     ctx.globalAlpha = 0.25; ctx.fillStyle = '#000';
     ctx.beginPath(); ctx.ellipse(px + w/2, py + h, Math.max(12, dw*0.35), 6, 0, 0, Math.PI*2); ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.restore();
+    return;
   }
+
+  // حساب آمن بدون قسمة على صفر
+  const fit = Math.min(w/sw, h/sh);
+  const s   = (isFinite(fit) ? fit : 1) * (cfg.scale||1);
+  const dw  = Math.max(1, Math.round(sw * s));
+  const dh  = Math.max(1, Math.round(sh * s));
+
+  const footY = py + h - PLAYER_BASELINE;
+  const dx = Math.round(px + (w - dw)/2);
+  const dy = Math.round(footY - dh - (cfg.offsetY||0));
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  if (player.facing === -1){
+    ctx.translate(dx + dw/2, dy + dh/2);
+    ctx.scale(-1, 1);
+    ctx.translate(-(dx + dw/2), -(dy + dh/2));
+  }
+
+  ctx.drawImage(img, sx, 0, sw, sh, dx, dy, dw, dh);
+
+  ctx.globalAlpha = 0.25; ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.ellipse(px + w/2, py + h, Math.max(12, dw*0.35), 6, 0, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
 
   // ===== أدوات =====
   function roundRect(x,y,w,h,r,fill,stroke){
@@ -901,3 +923,4 @@ function drawStreetDetails(startX, baselineY, spanW){
   </script>
 </body>
 </html>
+
