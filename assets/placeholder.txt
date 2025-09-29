@@ -1,0 +1,4 @@
+const DEFAULT_ASSETS = {
+  idle: 'assets/character_idle.png',
+  walk: 'assets/character_walk.png'
+};
