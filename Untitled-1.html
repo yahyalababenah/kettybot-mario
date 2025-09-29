@@ -1,0 +1,903 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>KettyBot Platformer — Mario Style + Enemies</title>
+  <style>
+    :root{
+      --sky1:#6ec6ff; --sky2:#b7e5ff;
+      --soil:#000000; --soil2:#252222;
+      --grass:#2b2b2b; --grass2:#767876;
+      --brick:#b05a26; --brick2:#e07a2f;
+      --pipe:#179940; --pipeDark:#0e6a2c;
+      --coin:#ffd84d; --flag:#ec1d2f;
+      --ink:#0f172a; --btn:#ffb703; --btn2:#2a9d8f;
+      --enemy:#b44a32; --enemyDark:#7d2e1f;
+       --asphalt:  #2f3338;   /* لون الأسفلت */
+
+  /* ألوان السماء التي عندك تبقى كما هي */
+  --shopWall:#ffe6c7;   /* لون واجهة المحل */
+  --shopRoof:#e5673e;   /* السقف/الكرانيش */
+  --shopDoor:#1f2937;   /* الباب */
+  --shopGlass:#ffffffb0;/* زجاج واجهة شفاف */
+  --awning1:#ff7a7a;    /* المظلّة (خط أحمر باهت) */
+  --awning2:#ffe3e3;    /* المظلّة (خط فاتح) */
+  --accent:#ffd166;     /* شريط إضاءة بسيط بلا كتابة */
+  --tree:#3aa35b; --treeDark:#2d7d43; /* أشجار الشارع */
+  --pavement:#d9d9d9;   /* لون الرصيف */
+  --pavementDark:#bfbfbf; /* ظل/تفصيل */
+--kid-shirt:#4f46e5;   /* قميص أزرق */
+  --kid-pants:#374151;   /* بنطال داكن */
+  --kid-skin:#f6c39b;    /* بشرة */
+  --kid-hair:#2b2b2b;    /* شعر */
+  --kid-shoes:#111827;   /* حذاء */
+
+
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:system-ui,Segoe UI,Arial}
+    body{display:grid;place-items:center;background:linear-gradient(var(--sky1),var(--sky2));color:var(--ink)}
+    .wrap{width:min(100vw,920px);padding:12px}
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:10px}
+    .hud{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .tag{background:#ffffffaa;border:1px solid #00000010;color:#111;padding:.35rem .65rem;border-radius:.6rem;font-variant-numeric:tabular-nums}
+    .btn{background:var(--btn);color:#111;border:none;padding:.55rem 1rem;border-radius:.8rem;cursor:pointer;font-weight:700}
+    .btn.secondary{background:var(--btn2);color:#fff}
+    canvas{width:100%;height:auto;background:linear-gradient(#87ceeb,#a0d9ff);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);border:1px solid #4aa3d9}
+    .touch{display:none;margin-top:10px;gap:10px;justify-content:center}
+    .pad{display:grid;grid-template-columns:repeat(3,60px);grid-template-rows:repeat(2,60px);gap:8px}
+    .tbtn{background:#ffffffcc;border:1px solid #00000022;border-radius:12px;font-weight:800;font-size:18px;display:grid;place-items:center}
+    .jump{width:120px}
+    @media (max-width:720px){.touch{display:flex}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="hud">
+        <span class="tag">🟡 عملات: <b id="coin-count">0</b>/<b id="coin-total">0</b></span>
+        <span class="tag">⏱️ وقت: <b id="time">0.0</b>s</span>
+        <span class="tag">❤️ محاولات: <b id="lives">3</b></span>
+      </div>
+      <div>
+        <button id="start" class="btn">ابدأ</button>
+        <button id="reset" class="btn secondary">إعادة</button>
+      </div>
+    </header>
+
+    <canvas id="game" width="960" height="540" aria-label="KettyBot Platformer"></canvas>
+
+    <div class="touch" aria-hidden="true">
+      <div class="pad">
+        <button class="tbtn" data-key="ArrowLeft">◀</button>
+        <div></div>
+        <button class="tbtn" data-key="ArrowRight">▶</button>
+        <button class="tbtn" data-key="KeyZ">⟲</button>
+        <div></div>
+        <button class="tbtn" data-key="Space">⤒</button>
+      </div>
+      <button class="tbtn jump" data-key="Space">قفز</button>
+    </div>
+  </div>
+
+  <script>
+  "use strict";
+
+  // === تحكم يدوي 100% (بدون معادلات ذكية) ===
+  const PLAYER_WIDTH    = 14;   // عرض hitbox (للتصادم)
+  const PLAYER_HEIGHT   = 36;   // طول hitbox
+  const PLAYER_BASELINE = 0;    // مسافة بسيطة أسفل القدم (0-4 مناسب)
+
+  const MANUAL = {
+    idle: { scale: 3, offsetY: -7 },  // واقف: نزّلته 6px ليجلس على الأرض بإحكام
+    walk: { scale: 3, offsetY: 0 }   // مشي: قريب من الأرض لكن أقل من idle
+  };
+
+  // ===== عناصر أساسية =====
+  const cvs = document.getElementById('game');
+  const ctx = cvs.getContext('2d');
+  const startBtn = document.getElementById('start');
+  const resetBtn = document.getElementById('reset');
+  const elCoinCount = document.getElementById('coin-count');
+  const elCoinTotal = document.getElementById('coin-total');
+  const elTime = document.getElementById('time');
+  const elLives = document.getElementById('lives');
+
+  // ===== إعدادات عامة =====
+  const TILE = 48;
+  const GRAV = 2000;
+  const MOVE_A = 2000;
+  const MAX_VX = 340;
+  const JUMP_VY = 760;
+  const FRICTION_G = 0.82;
+
+  let running = false, last=0, time=0, lives=3, gameOver=false, youWin=false;
+
+  // ===== خريطة مستوى =====
+  // # أرض(#)، B طوب، ? صندوق، P أنبوب، o عملة، G هدف، S سباون، E عدو
+  const levelText = [
+    "................................................................",
+    ".................................................o..............",
+    ".............................................###...............G",
+    "...............................o...........###...###............",
+    ".....................o..........................................",
+    "...............###......................###.....................",
+    "...............................................................",
+    "....o.............###.....E.....ooo.............###.............",
+    "...............................................................",
+    "############################..................##################",
+    "...............................................................",
+    "..........B B B........E.......?.................o..............",
+    "............................###.................................",
+    "S.....################.................##############...........",
+    "################################################################",
+  ];
+
+  const world  = { W: levelText[0].length*TILE, H: levelText.length*TILE };
+  const camera = { x:0, y:0, w:cvs.width, h:cvs.height };
+  const solids = [], coins = [], enemies = [];
+  let goal=null, player=null;
+
+  // ===== Sprites (Idle + Walk) =====
+  const DEFAULT_ASSETS = {
+    idle: 'assets/character_idle.png',
+    walk: 'assets/character_walk.png'
+  };
+  const SPRITES = {
+    idle: new Image(),
+    walk: new Image(),
+    haveWalk: false,
+    ready: false,
+    frameW: 0, frameH: 0,
+    walkFrames: 4
+  };
+
+  function loadSprites(){
+    const bust='?v='+Date.now();
+    SPRITES.idle.onload=()=>{
+      SPRITES.ready=true;
+      SPRITES.frameW = SPRITES.idle.naturalWidth  || SPRITES.idle.width;
+      SPRITES.frameH = SPRITES.idle.naturalHeight || SPRITES.idle.height;
+    };
+    SPRITES.idle.onerror = ()=>console.warn('⚠️ idle not found:', DEFAULT_ASSETS.idle);
+    SPRITES.idle.src = DEFAULT_ASSETS.idle + bust;
+
+    SPRITES.walk.onload=()=>{
+      const w = SPRITES.walk.naturalWidth || SPRITES.walk.width;
+      const h = SPRITES.walk.naturalHeight|| SPRITES.walk.height;
+      if(w>0 && h>0){ SPRITES.haveWalk=true; SPRITES.frameW=Math.floor(w/SPRITES.walkFrames); SPRITES.frameH=h; }
+    };
+    SPRITES.walk.onerror = ()=>console.warn('⚠️ walk not found:', DEFAULT_ASSETS.walk);
+    SPRITES.walk.src = DEFAULT_ASSETS.walk + bust;
+  }
+  loadSprites();
+
+  // ===== اللاعب =====
+  class Player{
+    constructor(x,y){ this.x=x; this.y=y; this.w=PLAYER_WIDTH; this.h=PLAYER_HEIGHT; this.vx=0; this.vy=0; this.onGround=false; this.facing=1; }
+  }
+
+  // ===== العدو =====
+ class Enemy{
+  constructor(x,y){
+    // حجم أصغر من السابق لأن الطفل أنحف
+    this.x=x; this.y=y; this.w=34; this.h=42;
+    this.vx = -70;  // سرعة دورية بطيئة
+    this.vy = 0;
+    this.alive = true; this.onGround=false;
+
+    // منطق مطاردة
+    this.state = 'patrol';          // 'patrol' | 'chase'
+    this.chaseSpeed = 145;          // سرعة المطاردة
+    this.patrolSpeed = 70;
+    this.detectRadius = 260;        // نصف قطر رؤية الطفل
+    this.flip = 1;                  // اتجاه الوجه (1 يمين، -1 يسار)
+    this.t = 0;                     // زمن للأنيميشن
+  }
+}
+
+  // ===== بناء العالم =====
+  function resetWorld(){
+    solids.length=0; coins.length=0; enemies.length=0;
+    goal=null; player=null; time=0; gameOver=false; youWin=false;
+
+    for(let r=0;r<levelText.length;r++){
+      for(let c=0;c<levelText[r].length;c++){
+        const ch=levelText[r][c], x=c*TILE, y=r*TILE;
+        if(ch==='#') solids.push({x,y,w:TILE,h:TILE,type:'ground'});
+        if(ch==='B') solids.push({x,y,w:TILE,h:TILE,type:'brick'});
+        if(ch==='?') solids.push({x,y,w:TILE,h:TILE,type:'qblock'});
+        if(ch==='P') solids.push({x:x, y:y-TILE, w:TILE, h:TILE*2, type:'pipe'});
+        if(ch==='o') coins.push({x:x+TILE/2, y:y+TILE/2, r:14, t:Math.random()*6, taken:false});
+        if(ch==='G') goal = {x:x+TILE/2, y:y+TILE-10};
+        if(ch==='S') player = new Player(x+10, y-10);
+        if(ch==='E') enemies.push(new Enemy(x+4, y-12));
+      }
+    }
+    if(!player) player = new Player(24,24);
+
+    // رفع اللاعب إن بدأ متداخل
+    let guard=0;
+    while(collideAny({x:player.x,y:player.y,w:player.w,h:player.h}) && guard++<80){ player.y -= 2; }
+
+    elCoinTotal.textContent = coins.length;
+    elCoinCount.textContent = collectedCoins();
+    elLives.textContent = lives;
+  }
+
+  function collectedCoins(){ return coins.filter(c=>c.taken).length; }
+
+  // ===== إدخال =====
+  const keys = new Set(), keyLatch = new Set();
+  addEventListener('keydown', e=>{ keys.add(e.code); });
+  addEventListener('keyup',   e=>{ keys.delete(e.code); keyLatch.delete('jump'); });
+  document.querySelectorAll('.tbtn').forEach(btn=>{
+    const code=btn.dataset.key, add=()=>keys.add(code), del=()=>{keys.delete(code); keyLatch.delete('jump');};
+    btn.addEventListener('touchstart',e=>{e.preventDefault();add();});
+    btn.addEventListener('touchend',e=>{e.preventDefault();del();});
+    btn.addEventListener('mousedown',add); btn.addEventListener('mouseup',del); btn.addEventListener('mouseleave',del);
+  });
+
+  // ===== تصادم =====
+  function rectOverlap(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
+  function collideAny(r){ for(const s of solids){ if(rectOverlap(r, s)) return true; } return false; }
+ function collideSolids(px, py, pw, ph){
+  const EPS = 0.001;
+  const STEP = 8; // أقصى ارتفاع نسمح بالطلوع عليه تلقائيًا (بكسل)
+
+  // محور X مع محاولة step-up
+  let rx = px, ry = py;
+  for (const s of solids) {
+    if (rx < s.x + s.w && rx + pw > s.x && ry < s.y + s.h && ry + ph > s.y) {
+      const fromLeft  = (rx + pw) - s.x;       // دخل من اليسار
+      const fromRight = (s.x + s.w) - rx;      // دخل من اليمين
+      const preferLeft = fromLeft < fromRight;
+
+      // جرّبي نرفعه قليل عشان يطلع على الحافة بدل ما يلصق
+      let tryY = ry - STEP;
+      let canStep = true;
+      for (const t of solids) {
+        if (tryY < t.y + t.h && tryY + ph > t.y && rx < t.x + t.w && rx + pw > t.x) { canStep = false; break; }
+      }
+      if (canStep) {
+        ry = tryY; // ارفعه وانتهينا من هذا الصدام
+        continue;
+      }
+
+      // ما نفع؟ ابعده أفقياً
+      if (preferLeft) rx -= fromLeft + EPS;
+      else            rx += fromRight + EPS;
+    }
+  }
+
+  // محور Y
+  for (const s of solids) {
+    if (rx < s.x + s.w && rx + pw > s.x && py < s.y + s.h && py + ph > s.y) {
+      const fromTop    = (py + ph) - s.y;   // سقط فوق السطح
+      const fromBottom = (s.y + s.h) - py;  // ضرب من تحت
+      if (fromTop < fromBottom) py -= fromTop + EPS;
+      else                      py += fromBottom + EPS;
+    }
+  }
+
+  return { x: rx, y: py };
+}
+
+  // ===== منطق إنقاص الحياة =====
+  function damagePlayer(){
+    if(gameOver||youWin) return;
+    lives--; elLives.textContent = Math.max(0,lives);
+    if(lives<=0){ gameOver=true; running=false; showBanner('💀 انتهت المحاولات — اضغطي "إعادة"'); }
+    else { respawn(); }
+  }
+
+  // ===== تحديث =====
+  function update(dt){
+    time += dt; elTime.textContent = time.toFixed(1);
+
+    // حركة اللاعب
+    if(keys.has('ArrowLeft')||keys.has('KeyA')){ player.vx -= MOVE_A*dt; player.facing=-1; }
+    if(keys.has('ArrowRight')||keys.has('KeyD')){ player.vx += MOVE_A*dt; player.facing= 1; }
+    if(!(keys.has('ArrowLeft')||keys.has('KeyA')||keys.has('ArrowRight')||keys.has('KeyD')) && player.onGround){ player.vx *= FRICTION_G; }
+    player.vx = Math.max(-MAX_VX, Math.min(MAX_VX, player.vx));
+
+    const wantJump = keys.has('Space')||keys.has('KeyW')||keys.has('ArrowUp');
+    if(wantJump && !keyLatch.has('jump')){ keyLatch.add('jump'); if(player.onGround){ player.vy = -JUMP_VY; player.onGround=false; } }
+    if(!wantJump){ keyLatch.delete('jump'); }
+
+    // فيزياء اللاعب
+    player.vy += GRAV*dt;
+    let nx = player.x + player.vx*dt;
+    let ny = player.y + player.vy*dt;
+
+    let test = collideSolids(nx, player.y, player.w, player.h);
+    if(test.x !== nx){ player.vx = 0; } player.x = test.x;
+
+    test = collideSolids(player.x, ny, player.w, player.h);
+    if(test.y !== ny){ if(player.vy>0) player.onGround=true; else player.onGround=false; player.vy=0; ny=test.y; }
+    else { player.onGround=false; }
+    player.y = ny;
+
+    // جمع العملات
+    for(const c of coins){
+      if(!c.taken){
+        const dx=(player.x+player.w/2)-c.x, dy=(player.y+player.h/2)-c.y;
+        if(Math.hypot(dx,dy)<26){ c.taken=true; elCoinCount.textContent = collectedCoins(); }
+      }
+      c.t += dt;
+    }
+
+    // أعداء: حركة بسيطة + فيزياء + ارتداد عند الحواف/العوائق
+    // أعداء: دورية + مطاردة + فيزياء بسيطة
+for(const e of enemies){
+  if(!e.alive) continue;
+  e.t += dt;
+
+  // قرار الحالة: مطاردة إذا اللاعب داخل نصف القطر وعلى نفس الارتفاع التقريبي
+  const dxp = (player.x + player.w/2) - (e.x + e.w/2);
+  const dyp = Math.abs( (player.y + player.h/2) - (e.y + e.h/2) );
+  const dist = Math.abs(dxp);
+
+  if(dist < e.detectRadius && dyp < 100){
+    e.state = 'chase';
+    e.vx = (dxp > 0 ? e.chaseSpeed : -e.chaseSpeed);
+  } else {
+    // دورية رايحة جاية
+    e.state = 'patrol';
+    if(Math.abs(e.vx) < 1) e.vx = (Math.random()<0.5 ? -e.patrolSpeed : e.patrolSpeed);
+    e.vx = (e.vx > 0 ? e.patrolSpeed : -e.patrolSpeed);
+  }
+
+  // اتّجاه الوجه
+  e.flip = e.vx >= 0 ? 1 : -1;
+
+  // جاذبية
+  e.vy += GRAV*dt*0.9;
+
+  // محور X مع ارتداد عند الاصطدام
+  let ex = e.x + e.vx*dt;
+  let ey = e.y + e.vy*dt;
+
+  let t1 = collideSolids(ex, e.y, e.w, e.h);
+  if(t1.x !== ex){
+    // اصطدم أفقياً → اعكس في الدورية، أو جرّب الالتفاف في المطاردة
+    if(e.state==='patrol'){
+      e.vx = -e.vx;
+    }else{
+      // في المطاردة: محاولة "step-up" صغيرة
+      const STEP = 8;
+      let tryY = e.y - STEP, canStep = true;
+      for(const s of solids){
+        if(tryY < s.y+s.h && tryY+e.h > s.y && e.x < s.x+s.w && e.x+e.w > s.x){ canStep=false; break; }
+      }
+      if(canStep){ e.y = tryY; }
+      else { e.vx = -e.vx*0.5; } // التفاف خفيف
+    }
+  } else {
+    e.x = ex;
+  }
+
+  // تحقق حافة أمام القدمين (في الدورية بس)، وإلا انعكس
+  if(e.state==='patrol'){
+    const aheadX = e.x + (e.vx>0 ? e.w+2 : -2);
+    const footY  = e.y + e.h + 4;
+    const groundAhead = solids.some(s => aheadX>=s.x && aheadX<=s.x+s.w && footY>=s.y && footY<=s.y+s.h);
+    if(!groundAhead){ e.vx = -e.vx; }
+  }
+
+  // محور Y
+  let t2 = collideSolids(e.x, ey, e.w, e.h);
+  if(t2.y !== ey){ if(e.vy>0) e.onGround=true; else e.onGround=false; e.vy=0; ey=t2.y; } else e.onGround=false;
+  e.y = ey;
+
+  // اصطدام اللاعب مع العدو (دعس أو إمساك)
+  if(rectOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, {x:e.x,y:e.y,w:e.w,h:e.h})){
+    const playerBottom = player.y + player.h;
+    const enemyTop = e.y;
+    if(player.vy > 200 && playerBottom - enemyTop < 28){ // دعس من فوق
+      e.alive=false;
+      player.vy = -620; // ارتداد
+    }else{
+      damagePlayer(); // الطفل "يمسك" اللاعب
+      break;
+    }
+  }
+}
+
+
+    // سقوط خارج العالم
+    if(player.y > world.H + 300){ damagePlayer(); }
+
+    // الهدف — الفوز بدون شرط جمع كل العملات (مكافأة فقط)
+    if(goal && rectOverlap({x:player.x,y:player.y,w:player.w,h:player.h},{x:goal.x-16,y:goal.y-36,w:32,h:36})){
+      youWin = true; running=false;
+      const bonus = (collectedCoins()===coins.length && coins.length>0) ? " + جميع العملات! 🟡" : "";
+      showBanner('🎉 فوز!'+bonus+' — اضغطي "إعادة" للعب مجددًا');
+    }
+
+    // كاميرا
+    camera.x = Math.max(0, Math.min(world.W - camera.w, player.x + player.w/2 - camera.w/2));
+    camera.y = Math.max(0, Math.min(world.H - camera.h, player.y + player.h/2 - camera.h/2));
+  }
+
+  // ===== رسم =====
+  function draw(){
+drawBackgroundWithShopsOnly();   // الخلفية الجديدة الثابتة
+  ctx.imageSmoothingEnabled = false;
+
+  // من هنا يبدأ عالم اللعبة المتحرك
+  ctx.translate(-camera.x, -camera.y);
+
+    for(const s of solids) drawSolid(s);
+    for(const c of coins) if(!c.taken) drawCoin(c);
+    if(goal) drawGoal(goal);
+    for(const e of enemies) if(e.alive) drawEnemy(e);
+
+    drawKetty(player.x, player.y);
+  }
+
+  // ===== خلفية ماريو =====
+  function drawBackgroundWithShopsOnly(){
+  // سماء وسحب ناعمة فقط (السحب تتحرك قليلاً، المحلات/الأشجار/الأعمدة ثابتة)
+  ctx.setTransform(1,0,0,1,0,0);
+  const g = ctx.createLinearGradient(0,0,0,cvs.height);
+  g.addColorStop(0, getCss('--sky1') || '#7cc7ff');
+  g.addColorStop(1, getCss('--sky2') || '#cfeeff');
+  ctx.fillStyle = g; 
+  ctx.fillRect(0,0,cvs.width,cvs.height);
+
+  // سحب خفيفة (حركة بسيطة لا تزعج)
+  ctx.imageSmoothingEnabled = false;
+  ctx.globalAlpha = .9; ctx.fillStyle = '#ffffff';
+  for(let i=0;i<6;i++){
+    const x = (i*200 - (camera.x*0.20)%260) + 60;
+    const y = 70 + (i%3)*22;
+    ctx.beginPath(); ctx.ellipse(x, y, 38, 18, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x+28, y+4, 24, 12, 0, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // baseline ثابت للمحلات والرصيف
+  const SHOPS_Y = Math.floor(cvs.height*0.70);
+
+  // محلات ثابتة (بدون أي تحريك)
+  drawShopsRow(0, SHOPS_Y, cvs.width);
+
+  // رصيف أعرض أمام المحلات (عرض أكبر)
+  drawPavementRow(0, SHOPS_Y, cvs.width, 140); // ← ارتفاع الرصيف 40px
+
+  // أشجار وأعمدة إنارة ثابتة
+  drawStreetDetails(0, SHOPS_Y + 40, cvs.width); // ارسمها على حافة الرصيف
+}
+
+
+function drawSkyline(startX, baselineY, avgH, jitter, col1, col2){
+  // نبني مبانٍ مستطيلة مختلفة العرض والارتفاع، مع نوافذ نقاط
+  const W = cvs.width*2;          // بعرض مضاعف كي يتكرر بانسياب
+  let x = startX - ( (camera.x|0) % 240 ); // محاذاة التكرار
+  while(x < startX + W){
+    const w = 80 + ((x*37)%70);                 // عرض متغيّر
+    const h = avgH + ((x*53)%jitter) - jitter/2;// ارتفاع متغيّر
+    const y = baselineY - h;
+
+    // جسم المبنى بتدرّج طولي خفيف
+    const g = ctx.createLinearGradient(0,y,0,y+h);
+    g.addColorStop(0,col1); g.addColorStop(1,col2);
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+
+    // نوافذ نقطية
+    ctx.globalAlpha = .25; ctx.fillStyle = '#fff';
+    for(let yy=y+10; yy<y+h-10; yy+=14){
+      for(let xx=x+10; xx<x+w-10; xx+=18){
+        if(((xx+yy)>>3)&1) ctx.fillRect(xx, yy, 3, 3);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // أسطح بسيطة
+    ctx.fillStyle = 'rgba(0,0,0,.18)';
+    ctx.fillRect(x, y, w, 3);
+
+    x += w + 24;
+  }
+}
+
+// يرسم صفًا متكررًا من محلات (مطعم/مقهى/ماركت)
+function drawShopsRow(startX, baselineY, spanW){
+  let x = startX;                  // بدون camera.x
+  while(x < startX + spanW){
+    drawShop(x+10, baselineY-78, 120, 78, 0); // typeIndex مهمل
+    x += 160;
+  }
+}
+
+
+function drawShop(x, y, w, h, _typeIndex){
+  // جدار + سقف
+  ctx.fillStyle = getCss('--shopWall');
+  ctx.fillRect(x, y, w, h);
+
+  ctx.fillStyle = getCss('--shopRoof');
+  ctx.fillRect(x-6, y-10, w+12, 10);      // سقف علوي
+  ctx.fillRect(x, y, w, 4);               // كرانيش صغيرة
+
+  // باب وزجاج
+  ctx.fillStyle = getCss('--shopDoor');
+  ctx.fillRect(x+10, y+h-40, 24, 40);     // باب
+  ctx.fillStyle = getCss('--shopGlass');
+  ctx.fillRect(x+40, y+16, w-52, h-46);   // واجهة زجاج
+
+  // مظلة مخططة (بدون نص)
+  const stripeW = 10;
+  for(let i=0;i<w;i+=stripeW){
+    ctx.fillStyle = ( (i/stripeW)&1 ) ? getCss('--awning1') : getCss('--awning2');
+    ctx.fillRect(x+i, y+6, stripeW, 10);
+  }
+
+  // شريط إضاءة ملوّن بدون كلمات (Accent)
+  ctx.fillStyle = getCss('--accent');
+  roundRect(x+w-76, y-20, 72, 14, 6, true, false);
+  ctx.globalAlpha = .35;
+  ctx.fillRect(x+w-76, y-8, 72, 2); // توهج بسيط تحت الشريط
+  ctx.globalAlpha = 1;
+}
+function drawPavementRow(startX, baselineY, spanW, h=1){
+  const tileW = 100;
+
+  // جسم الرصيف
+  ctx.fillStyle = getCss('--pavement') || '#d9d9d9';
+  ctx.fillRect(startX, baselineY, spanW, h);
+
+  // حافة علوية داكنة (يفصل المحلات عن الرصيف)
+  ctx.fillStyle = getCss('--pavementDark') || '#bfbfbf';
+  ctx.fillRect(startX, baselineY, spanW, 3);
+
+  // تشقيق البلاطات (خطوط رأسية كل tileW)
+  ctx.strokeStyle = getCss('--pavementDark') || '#bfbfbf';
+  ctx.lineWidth = 2;
+  for(let x = startX + tileW; x < startX + spanW; x += tileW){
+    ctx.beginPath();
+    ctx.moveTo(x, baselineY+4);
+    ctx.lineTo(x, baselineY+h-2);
+    ctx.stroke();
+  }
+
+  // ظل خفيف أسفل الرصيف
+  ctx.globalAlpha = .10; ctx.fillStyle = '#000';
+  ctx.fillRect(startX, baselineY+h-2, spanW, 2);
+  ctx.globalAlpha = 1;
+}
+
+
+
+function roundedBand(x, y, w, h, bg, fg, text){
+  // شريط مستدير مع نص
+  ctx.fillStyle = bg; roundRect(x, y, w, h, 6, true, false);
+  ctx.fillStyle = fg; ctx.fillText(text, x+8, y+2);
+  // توهج بسيط
+  ctx.globalAlpha=.35; ctx.fillStyle = fg;
+  ctx.fillRect(x, y+h-2, w, 2);
+  ctx.globalAlpha=1;
+}
+
+function drawStreetDetails(startX, baselineY, spanW){
+  for(let x = startX; x < startX + spanW; x += 240){
+    // شجرة
+    ctx.fillStyle = getCss('--treeDark'); ctx.fillRect(x+30, baselineY-20, 10, 24);
+    ctx.fillStyle = getCss('--tree');
+    ctx.beginPath(); ctx.arc(x+35, baselineY-26, 14, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+44, baselineY-18, 12, 0, Math.PI*2); ctx.fill();
+
+    // عمود إنارة
+    ctx.fillStyle = '#4b5563';
+    ctx.fillRect(x+140, baselineY-42, 4, 42);
+    ctx.fillStyle = '#ffd966';
+    ctx.beginPath(); ctx.arc(x+142, baselineY-46, 6, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha=.15; ctx.beginPath(); ctx.arc(x+142, baselineY-46, 24, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
+  }
+}
+
+
+  // ===== رسم بلاطات =====
+  function drawSolid(s){
+    if(s.type==='pipe'){
+      const lip = 12;
+      ctx.fillStyle = getCss('--pipe');
+      ctx.fillRect(s.x, s.y+lip, s.w, s.h-lip);
+      ctx.fillStyle = getCss('--pipeDark');
+      ctx.fillRect(s.x + s.w*0.65, s.y+lip+2, 4, s.h-lip-4);
+      ctx.fillStyle = getCss('--pipe');
+      ctx.fillRect(s.x-6, s.y, s.w+12, lip);
+      ctx.strokeStyle = '#0d5c26'; ctx.lineWidth = 2;
+      ctx.strokeRect(s.x-6+.5, s.y+.5, s.w+12-1, lip-1);
+      return;
+    }
+    if(s.type==='qblock'){
+      const x=s.x+2, y=s.y+2, w=s.w-4, h=s.h-4;
+      ctx.fillStyle = '#f6a91a'; ctx.fillRect(x,y,w,h);
+      ctx.fillStyle = '#ffd37a'; ctx.fillRect(x,y, w, 6);
+      ctx.strokeStyle = '#b06a12'; ctx.lineWidth = 2; ctx.strokeRect(x+.5,y+.5,w-1,h-1);
+      ctx.fillStyle = '#6b3a0b'; ctx.font='bold 24px system-ui'; ctx.fillText('?', x+w/2-7, y+h/2+8);
+      return;
+    }
+    if(s.type==='brick'){
+      const x=s.x+2, y=s.y+2, w=s.w-4, h=s.h-4;
+      ctx.fillStyle = getCss('--brick'); ctx.fillRect(x,y,w,h);
+      ctx.fillStyle = getCss('--brick2'); ctx.fillRect(x, y+h/2-2, w, 4); ctx.fillRect(x+w/2-2, y, 4, h);
+      ctx.strokeStyle = '#6d2b0e'; ctx.lineWidth=1; ctx.strokeRect(x+.5,y+.5,w-1,h-1);
+      return;
+    }
+    // أرض
+    const x=s.x, y=s.y, w=s.w, h=s.h;
+    ctx.fillStyle = getCss('--soil');  ctx.fillRect(x,y,w,h);
+    ctx.fillStyle = getCss('--soil2');
+    for(let iy=0; iy<h; iy+=12) for(let ix=0; ix<w; ix+=12) ctx.fillRect(x+ix, y+iy, 10, 10);
+    ctx.fillStyle = getCss('--grass');  ctx.fillRect(x, y, w, 10);
+    ctx.fillStyle = getCss('--grass2'); ctx.fillRect(x, y, w, 4);
+  }
+
+  // ===== عملة =====
+  function drawCoin(c){
+  // === بطارية بدلاً من عملة ===
+  // تهتزّ خفيف وتطفو للأعلى/الأسفل مثل العملات
+  const t = c.t * 6;
+  const bob = Math.sin(t) * 3;         // طفو
+  const charge = (Math.sin(t*0.6)+1)/2; // نسبة شحن 0..1 متحركة
+
+  const W = 24;   // عرض البطارية
+  const H = 36;   // ارتفاع البطارية
+  const x = c.x - W/2;
+  const y = c.y - H/2 - Math.sin(c.t*2)*6; // نفس الطفو القديم
+
+  // ألوان (مستخرجة من الثيم الحالي)
+  const caseCol   = '#2b2b2b';       // هيكل البطارية
+  const capCol    = '#777';          // رأس البطارية المعدني
+  const fillColHi = '#22c55e';       // امتلاء أخضر
+  const fillColLo = '#ef4444';       // لو أردت وميض أحمر عند انخفاض الشحن
+  const glassCol  = 'rgba(255,255,255,.25)';
+
+  // نسبة الامتلاء داخل البطارية (ربع إلى كامل)
+  const level = 0.25 + charge * 0.75;
+
+  ctx.save();
+  ctx.translate(0, bob*0.2); // اهتزاز بسيط
+
+  // ظل تحت البطارية
+  ctx.globalAlpha = 0.25; ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.ellipse(c.x, c.y + H/2 + 8, 12, 4, 0, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // جسم البطارية
+  const r = 6; // نصف قطر الزوايا
+  ctx.fillStyle = caseCol;
+  roundRect(x, y, W, H, r, true, false);
+
+  // رأس البطارية
+  ctx.fillStyle = capCol;
+  ctx.fillRect(x + W*0.3, y - 4, W*0.4, 6);
+
+  // مستوى الشحن
+  const pad = 4;
+  const innerW = W - pad*2;
+  const innerH = H - pad*2;
+  const fillH = Math.max(2, Math.floor(innerH * level));
+  ctx.fillStyle = level > 0.35 ? fillColHi : fillColLo;
+  ctx.fillRect(x + pad, y + pad + (innerH - fillH), innerW, fillH);
+
+  // تقسيمات “خلايا” لطيفة
+  ctx.globalAlpha = .25;
+  ctx.fillStyle = '#000';
+  for(let yy = 0; yy < innerH; yy += 6){
+    ctx.fillRect(x + pad, y + pad + yy, innerW, 1);
+  }
+  ctx.globalAlpha = 1;
+
+  // لمعان زجاجي
+  ctx.fillStyle = glassCol;
+  roundRect(x+2, y+2, 6, H-4, 4, true, false);
+
+  ctx.restore();
+}
+
+
+  // ===== العدو رسم =====
+  function drawEnemy(e){
+  ctx.save();
+
+  // مركز الرسم
+  const x = e.x, y = e.y, w = e.w, h = e.h;
+
+  // اتّجاه الوجه
+  if(e.flip === -1){
+    ctx.translate(x + w/2, y + h/2);
+    ctx.scale(-1, 1);
+    ctx.translate(-(x + w/2), -(y + h/2));
+  }
+
+  // معامل حركة للأذرع/الأرجل
+  const run = Math.min(1, Math.abs(e.vx)/e.chaseSpeed);
+  const t = e.t * (6 + 4*run);
+  const armSwing = Math.sin(t) * (8 + 6*run);  // تأرجح الذراع
+  const legSwing = Math.sin(t + Math.PI/2) * (6 + 4*run);
+
+  // ظل تحت الطفل
+  ctx.globalAlpha = 0.22; ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.ellipse(x + w/2, y + h, Math.max(10, w*0.4), 5, 0, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // الجسم (قميص + بنطال)
+  ctx.fillStyle = getCss('--kid-shirt') || '#4f46e5';
+  ctx.fillRect(x + w*0.25, y + h*0.30, w*0.5, h*0.42);
+  ctx.fillStyle = getCss('--kid-pants') || '#374151';
+  ctx.fillRect(x + w*0.28, y + h*0.68, w*0.44, h*0.18);
+
+  // رأس
+  ctx.fillStyle = getCss('--kid-skin') || '#f6c39b';
+  ctx.beginPath(); ctx.ellipse(x + w*0.5, y + h*0.18, w*0.26, h*0.18, 0, 0, Math.PI*2); ctx.fill();
+
+  // شعر
+  ctx.fillStyle = getCss('--kid-hair') || '#2b2b2b';
+  ctx.beginPath();
+  ctx.ellipse(x + w*0.5, y + h*0.12, w*0.28, h*0.10, 0, 0, Math.PI*2);
+  ctx.fill();
+  // عين وفم بسيط
+  ctx.fillStyle = '#111';
+  ctx.fillRect(x + w*0.58, y + h*0.17, 2, 2); // عين يمين (يتجه يمين افتراضيًا)
+  ctx.globalAlpha = .8; ctx.fillRect(x + w*0.48, y + h*0.24, 6, 1); ctx.globalAlpha = 1;
+
+  // ذراعان: اليمنى تمتد للأمام للإمساك
+  ctx.fillStyle = getCss('--kid-skin') || '#f6c39b';
+  // ذراع أمامية (تمتد)
+  ctx.save();
+  ctx.translate(x + w*0.7, y + h*0.40);
+  ctx.rotate((-12 + armSwing*0.06) * Math.PI/180);
+  ctx.fillRect(-2, 0, 16, 5);
+  ctx.restore();
+
+  // ذراع خلفية
+  ctx.save();
+  ctx.translate(x + w*0.30, y + h*0.40);
+  ctx.rotate((12 - armSwing*0.06) * Math.PI/180);
+  ctx.fillRect(-14, 0, 16, 5);
+  ctx.restore();
+
+  // أرجل
+  ctx.fillStyle = getCss('--kid-pants') || '#374151';
+  // رجل أمامية
+  ctx.save();
+  ctx.translate(x + w*0.58, y + h*0.78);
+  ctx.rotate((-10 + legSwing*0.08) * Math.PI/180);
+  ctx.fillRect(-2, 0, 12, 6);
+  ctx.restore();
+  // رجل خلفية
+  ctx.save();
+  ctx.translate(x + w*0.42, y + h*0.78);
+  ctx.rotate((10 - legSwing*0.08) * Math.PI/180);
+  ctx.fillRect(-10, 0, 12, 6);
+  ctx.restore();
+
+  // أحذية
+  ctx.fillStyle = getCss('--kid-shoes') || '#111827';
+  ctx.fillRect(x + w*0.38, y + h*0.88, 10, 4);
+  ctx.fillRect(x + w*0.56, y + h*0.88, 10, 4);
+
+  ctx.restore();
+}
+
+
+  // ===== العلم =====
+  function drawGoal(gp){
+    ctx.save(); ctx.translate(gp.x, gp.y);
+    ctx.fillStyle = '#2e7d32'; ctx.fillRect(-2,-40,4,40);
+    ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(0,-40,3,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = getCss('--flag');
+    ctx.beginPath(); ctx.moveTo(2,-36); ctx.lineTo(26,-30); ctx.lineTo(2,-24); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // ===== رسم شخصية KettyBot (تحكم يدوي بالـscale والـoffsetY) =====
+  function drawKetty(px, py){
+    const w = player.w, h = player.h;
+    const isWalking = (SPRITES.haveWalk && Math.abs(player.vx) > 10 && player.onGround);
+    const cfg = isWalking ? MANUAL.walk : MANUAL.idle;
+    let img = isWalking ? SPRITES.walk : SPRITES.idle;
+
+    // مصدر الإطار
+    let sx=0, sw, sh;
+    if(isWalking){
+      const frames = Math.max(1, SPRITES.walkFrames|0);
+      sw = Math.floor((img.naturalWidth||img.width)/frames);
+      sh = (img.naturalHeight||img.height);
+      const fps=10, frame = Math.floor(time*fps)%frames;
+      sx = frame*sw;
+    }else{
+      sw = SPRITES.frameW || (img.naturalWidth||img.width||w);
+      sh = SPRITES.frameH || (img.naturalHeight||img.height||h);
+    }
+
+    // تحجيم داخل hitbox + مقياس يدوي
+    const fit = Math.min(w/sw, h/sh);
+    const s   = fit * (cfg.scale || 1);
+    const dw  = Math.max(1, Math.round(sw * s));
+    const dh  = Math.max(1, Math.round(sh * s));
+
+    const footY = py + h - PLAYER_BASELINE;
+    const dy = Math.round( footY - dh - (cfg.offsetY || 0) );
+    const dx = Math.round( px + (w - dw)/2 );
+
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    if (player.facing === -1){
+      ctx.translate(dx + dw/2, dy + dh/2);
+      ctx.scale(-1, 1);
+      ctx.translate(-(dx + dw/2), -(dy + dh/2));
+    }
+
+    if (img && (img.complete || img.naturalWidth)){
+      ctx.drawImage(img, sx, 0, sw, sh, dx, dy, dw, dh);
+    } else {
+      ctx.fillStyle = '#f6c700'; ctx.fillRect(dx, dy, dw, dh);
+      ctx.fillStyle = '#222';     ctx.fillRect(dx+6, dy+Math.round(dh*0.35), dw-12, Math.round(dh*0.55));
+    }
+
+    // ظل
+    ctx.globalAlpha = 0.25; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(px + w/2, py + h, Math.max(12, dw*0.35), 6, 0, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // ===== أدوات =====
+  function roundRect(x,y,w,h,r,fill,stroke){
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+rr, y); ctx.lineTo(x+w-rr, y);
+    ctx.arcTo(x+w, y, x+w, y+rr, rr);
+    ctx.lineTo(x+w, y+h-rr);
+    ctx.arcTo(x+w, y+h, x+w-rr, y+h, rr);
+    ctx.lineTo(x+rr, y+h);
+    ctx.arcTo(x, y+h, x, y+h-rr, rr);
+    ctx.lineTo(x, y+rr);
+    ctx.arcTo(x, y, x+rr, y, rr);
+    if(fill) ctx.fill();
+    if(stroke) ctx.stroke();
+  }
+  function getCss(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function respawn(){
+    for(let r=0;r<levelText.length;r++){
+      for(let c=0;c<levelText[r].length;c++){
+        if(levelText[r][c]==='S'){ player.x=c*TILE+10; player.y=r*TILE-10; player.vx=0; player.vy=0; return; }
+      }
+    }
+    player.x=24; player.y=24; player.vx=player.vy=0;
+  }
+  function showBanner(msg){
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.font='700 18px system-ui';
+    const w = ctx.measureText(msg).width+28;
+    ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(cvs.width/2-w/2, 20, w, 36);
+    ctx.fillStyle='#e2e8f0'; ctx.fillText(msg, cvs.width/2-w/2+14, 44);
+  }
+
+  // ===== لوب =====
+  function loop(ts){
+    if(!running){ draw(); return; }
+    const dt = Math.min(0.033, (ts - last)/1000 || 0);
+    last = ts; update(dt); draw(); requestAnimationFrame(loop);
+  }
+
+  // ===== تشغيل =====
+  resetWorld();
+  draw();
+
+  startBtn.addEventListener('click', ()=>{
+    if(!running && !youWin && !gameOver){ running=true; last=performance.now(); requestAnimationFrame(loop); }
+  });
+  resetBtn.addEventListener('click', ()=>{
+    running=false; resetWorld(); draw();
+  });
+  </script>
+</body>
+</html>
