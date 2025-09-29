@@ -45,11 +45,49 @@
     .btn{background:var(--btn);color:#111;border:none;padding:.55rem 1rem;border-radius:.8rem;cursor:pointer;font-weight:700}
     .btn.secondary{background:var(--btn2);color:#fff}
     canvas{width:100%;height:auto;background:linear-gradient(#87ceeb,#a0d9ff);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);border:1px solid #4aa3d9}
-    .touch{display:none;margin-top:10px;gap:10px;justify-content:center}
-    .pad{display:grid;grid-template-columns:repeat(3,60px);grid-template-rows:repeat(2,60px);gap:8px}
-    .tbtn{background:#ffffffcc;border:1px solid #00000022;border-radius:12px;font-weight:800;font-size:18px;display:grid;place-items:center}
-    .jump{width:120px}
-    @media (max-width:720px){.touch{display:flex}}
+/* === تحكّم موبايل عملي === */
+.touch {
+  position: fixed;
+  inset: auto 0 8px 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 12px;
+  z-index: 90;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none; /* منع سحب/زوم افتراضي */
+}
+
+.touch .panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(255,255,255,.18);
+  backdrop-filter: blur(8px);
+  border: 1px solid #ffffff30;
+  border-radius: 14px;
+  padding: 10px;
+}
+
+.tbtn {
+  width: 84px; height: 84px;
+  border-radius: 16px;
+  border: 1px solid #00000022;
+  background: #ffffffd9;
+  font: 700 20px system-ui;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 6px 16px rgba(0,0,0,.15);
+}
+
+.tbtn.circle { border-radius: 50%; }
+.tbtn.big    { width: 120px; height: 120px; font-size: 22px; }
+.tbtn.on     { transform: translateY(2px); opacity: .9; }
+
+@media (min-width: 721px){ .touch{ display:none } } /* كمبيوتر */
+
   </style>
 </head>
 <body>
@@ -68,18 +106,21 @@
 
     <canvas id="game" width="960" height="540" aria-label="KettyBot Platformer"></canvas>
 
-    <div class="touch" aria-hidden="true">
-      <div class="pad">
-        <button class="tbtn" data-key="ArrowLeft">◀</button>
-        <div></div>
-        <button class="tbtn" data-key="ArrowRight">▶</button>
-        <button class="tbtn" data-key="KeyZ">⟲</button>
-        <div></div>
-        <button class="tbtn" data-key="Space">⤒</button>
-      </div>
-      <button class="tbtn jump" data-key="Space">قفز</button>
-    </div>
+   <!-- === تحكّم موبايل جديد === -->
+<div class="touch" aria-hidden="true">
+  <!-- منطقة السحب للمشي -->
+  <div id="zone-left" class="panel" style="min-height:120px">
+    <button class="tbtn circle" data-key="ArrowLeft">◀</button>
+    <button class="tbtn circle" data-key="ArrowRight">▶</button>
   </div>
+
+  <!-- منطقة القفز/الاندفاع -->
+  <div id="zone-right" class="panel" style="min-height:120px">
+    <button class="tbtn big" data-key="Space">قفز</button>
+    <button class="tbtn" data-key="KeyZ">اندفاع</button>
+  </div>
+</div>
+
 
   <script>
   "use strict";
@@ -232,12 +273,85 @@
   const keys = new Set(), keyLatch = new Set();
   addEventListener('keydown', e=>{ keys.add(e.code); });
   addEventListener('keyup',   e=>{ keys.delete(e.code); keyLatch.delete('jump'); });
-  document.querySelectorAll('.tbtn').forEach(btn=>{
-    const code=btn.dataset.key, add=()=>keys.add(code), del=()=>{keys.delete(code); keyLatch.delete('jump');};
-    btn.addEventListener('touchstart',e=>{e.preventDefault();add();});
-    btn.addEventListener('touchend',e=>{e.preventDefault();del();});
-    btn.addEventListener('mousedown',add); btn.addEventListener('mouseup',del); btn.addEventListener('mouseleave',del);
+ /* ===== تحكّم الموبايل المُحسّن (Pointer Events + سحب) ===== */
+const press   = (code, el)=>{ keys.add(code); el?.classList.add('on'); if(navigator.vibrate) navigator.vibrate(10); };
+const release = (code, el)=>{ keys.delete(code); if(code==='Space') keyLatch.delete('jump'); el?.classList.remove('on'); };
+
+function bindButton(btn){
+  const code = btn.dataset.key;
+  btn.addEventListener('pointerdown', e=>{
+    e.preventDefault(); btn.setPointerCapture(e.pointerId);
+    press(code, btn);
   });
+  const up = e=>{ try{ btn.releasePointerCapture(e.pointerId); }catch{} release(code, btn); };
+  btn.addEventListener('pointerup', up);
+  btn.addEventListener('pointercancel', up);
+  btn.addEventListener('lostpointercapture', up);
+}
+document.querySelectorAll('.tbtn').forEach(bindButton);
+
+/* مناطق سحب عمليّة:
+   - السحب أفقياً على يسار الشاشة ⇒ يمين/يسار
+   - ضغطة قصيرة في اليمين ⇒ قفز
+   - نقرة مزدوجة في اليمين ⇒ اندفاع (KeyZ)
+*/
+const leftZone  = document.getElementById('zone-left');
+const rightZone = document.getElementById('zone-right');
+
+let swipe = { id:null, startX:0, active:'none' };
+const SWIPE_DEAD = 16;   // عتبة بداية الحركة
+const SWIPE_MIN   = 40;  // مسافة متوسطة لاعتبار اتجاه واضح
+
+leftZone.addEventListener('pointerdown', e=>{
+  e.preventDefault(); leftZone.setPointerCapture(e.pointerId);
+  swipe.id = e.pointerId; swipe.startX = e.clientX; swipe.active = 'none';
+});
+
+leftZone.addEventListener('pointermove', e=>{
+  if(swipe.id !== e.pointerId) return;
+  const dx = e.clientX - swipe.startX;
+  // اطفِ كلا الاتجاهين أولاً
+  keys.delete('ArrowLeft'); keys.delete('ArrowRight');
+  if(Math.abs(dx) < SWIPE_DEAD){ swipe.active = 'none'; return; }
+  if(dx > SWIPE_MIN){ keys.add('ArrowRight'); swipe.active = 'right'; }
+  else if(dx < -SWIPE_MIN){ keys.add('ArrowLeft'); swipe.active = 'left'; }
+});
+
+function endSwipe(){
+  keys.delete('ArrowLeft'); keys.delete('ArrowRight');
+  swipe.id = null; swipe.active = 'none';
+}
+leftZone.addEventListener('pointerup',   endSwipe);
+leftZone.addEventListener('pointercancel', endSwipe);
+leftZone.addEventListener('lostpointercapture', endSwipe);
+
+/* يمين: قفز/اندفاع مع نقرة مزدوجة */
+let lastTap = 0;
+rightZone.addEventListener('pointerdown', e=>{
+  e.preventDefault(); rightZone.setPointerCapture(e.pointerId);
+});
+rightZone.addEventListener('pointerup', e=>{
+  const now = performance.now();
+  const dt = now - lastTap;
+  lastTap = now;
+  // نقرة مزدوجة خلال 280ms ⇒ اندفاع
+  if(dt > 0 && dt < 280){
+    press('KeyZ'); setTimeout(()=>release('KeyZ'), 160);
+  }else{
+    // قفز عادي
+    press('Space'); setTimeout(()=>release('Space'), 80);
+  }
+});
+rightZone.addEventListener('pointercancel', ()=> release('Space'));
+rightZone.addEventListener('lostpointercapture', ()=> release('Space'));
+
+/* منع سحب الصفحة/التكبير أثناء اللعب على الموبايل */
+['touchstart','touchmove','gesturestart'].forEach(ev=>{
+  window.addEventListener(ev, e=>{
+    if(e.target.closest('.touch') || e.target.id === 'game'){ e.preventDefault(); }
+  }, { passive:false });
+});
+
 
   // ===== تصادم =====
   function rectOverlap(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
@@ -414,6 +528,8 @@ for(const e of enemies){
       youWin = true; running=false;
       const bonus = (collectedCoins()===coins.length && coins.length>0) ? " + جميع العملات! 🟡" : "";
       showBanner('🎉 فوز!'+bonus+' — اضغطي "إعادة" للعب مجددًا');
+showBanner("", true); // ← هذا يفعّل الإعلان الخاص
+
     }
 
     // كاميرا
@@ -873,13 +989,34 @@ function drawStreetDetails(startX, baselineY, spanW){
     }
     player.x=24; player.y=24; player.vx=player.vy=0;
   }
-  function showBanner(msg){
-    ctx.setTransform(1,0,0,1,0,0);
-    ctx.font='700 18px system-ui';
-    const w = ctx.measureText(msg).width+28;
-    ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(cvs.width/2-w/2, 20, w, 36);
-    ctx.fillStyle='#e2e8f0'; ctx.fillText(msg, cvs.width/2-w/2+14, 44);
+ function showBanner(msg, isAd=false){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.font='700 20px system-ui';
+
+  if(isAd){
+    // إعلان مخصص
+    const text = "اشتركوا بـ QTP";
+    const w = ctx.measureText(text).width+40;
+
+    // خلفية زرقاء غامقة
+    ctx.fillStyle='#0a2540';
+    ctx.fillRect(cvs.width/2-w/2, cvs.height/2-40, w, 80);
+
+    // نص أبيض
+    ctx.fillStyle='#fff';
+    ctx.fillText(text, cvs.width/2-w/2+20, cvs.height/2+10);
+
+    return;
   }
+
+  // الحالة العادية (خسارة/رسائل النظام)
+  const w = ctx.measureText(msg).width+28;
+  ctx.fillStyle='rgba(0,0,0,.55)';
+  ctx.fillRect(cvs.width/2-w/2, 20, w, 36);
+  ctx.fillStyle='#e2e8f0';
+  ctx.fillText(msg, cvs.width/2-w/2+14, 44);
+}
+
 
   // ===== لوب =====
   function loop(ts){
@@ -901,5 +1038,6 @@ function drawStreetDetails(startX, baselineY, spanW){
   </script>
 </body>
 </html>
+
 
 
